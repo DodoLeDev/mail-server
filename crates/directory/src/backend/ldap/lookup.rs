@@ -34,7 +34,7 @@ impl LdapDirectory {
         let (mut external_principal, stored_principal) = match by {
             QueryBy::Name(username) => {
                 if let Some(principal) = self
-                    .find_principal(&mut conn, &self.mappings.filter_name.build(username))
+                    .find_principal(&mut conn, username)
                     .await?
                 {
                     (
@@ -54,7 +54,7 @@ impl LdapDirectory {
                     if let Some(principal) = self
                         .find_principal(
                             &mut conn,
-                            &self.mappings.filter_name.build(stored_principal_.name()),
+                            stored_principal_.name(),
                         )
                         .await?
                     {
@@ -97,11 +97,10 @@ impl LdapDirectory {
                         return Ok(None);
                     }
 
-                    let filter = &self.mappings.filter_name.build(username);
                     let principal = if auth_bind.search {
-                        self.find_principal(&mut ldap, filter).await
+                        self.find_principal(&mut ldap, username).await
                     } else {
-                        self.find_principal(&mut conn, filter).await
+                        self.find_principal(&mut conn, username).await
                     };
                     match principal {
                         Ok(Some(principal)) => (
@@ -121,7 +120,7 @@ impl LdapDirectory {
                         Err(err) => return Err(err),
                     }
                 } else if let Some(principal) = self
-                    .find_principal(&mut conn, &self.mappings.filter_name.build(username))
+                    .find_principal(&mut conn, username)
                     .await?
                 {
                     if principal.verify_secret(secret).await? {
@@ -323,12 +322,12 @@ impl LdapDirectory {
     async fn find_principal(
         &self,
         conn: &mut Ldap,
-        filter: &str,
+        username: &str,
     ) -> trc::Result<Option<Principal>> {
         conn.search(
             &self.mappings.base_dn,
             Scope::Subtree,
-            filter,
+            &self.mappings.filter_name.build(username),
             &self.mappings.attrs_principal,
         )
         .await
@@ -337,13 +336,13 @@ impl LdapDirectory {
         .map(|(rs, _)| {
             trc::event!(
                 Store(trc::StoreEvent::LdapQuery),
-                Details = filter.to_string(),
+                Details = self.mappings.filter_name.build(username).to_string(),
                 Result = rs.first().map(result_to_trace).unwrap_or_default()
             );
 
             rs.into_iter().next().map(|entry| {
                 self.mappings
-                    .entry_to_principal(SearchEntry::construct(entry))
+                    .entry_to_principal(username, SearchEntry::construct(entry))
             })
         })
         .map_err(|err| err.into_error().caused_by(trc::location!()))
@@ -351,7 +350,7 @@ impl LdapDirectory {
 }
 
 impl LdapMappings {
-    fn entry_to_principal(&self, entry: SearchEntry) -> Principal {
+    fn entry_to_principal(&self, username: &str, entry: SearchEntry) -> Principal {
         let mut principal = Principal::default();
         let mut role = ROLE_USER;
 
@@ -363,12 +362,18 @@ impl LdapMappings {
                         value.into_iter().next().unwrap_or_default(),
                     );
                 } else {
+                    /*
                     for (idx, item) in value.into_iter().enumerate() {
                         principal.prepend_str(PrincipalField::Emails, item.to_lowercase());
                         if idx == 0 {
                             principal.set(PrincipalField::Name, item);
                         }
                     }
+                    */
+
+                    // This code fragment sets the name & e-mail address of the account with the provided username
+                    principal.prepend_str(PrincipalField::Emails, username.to_lowercase());
+                    principal.set(PrincipalField::Name, username);
                 }
             } else if self.attr_secret.contains(&attr) {
                 for item in value {
