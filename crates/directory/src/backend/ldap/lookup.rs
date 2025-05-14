@@ -243,13 +243,19 @@ impl LdapDirectory {
         for entry in rs {
             let entry = SearchEntry::construct(entry);
             for attr in &self.mappings.attr_name {
-                if let Some(name) = entry.attrs.get(attr).and_then(|v| v.first()) {
-                    if !name.is_empty() {
-                        return self
-                            .data_store
-                            .get_or_create_principal_id(name, Type::Individual)
-                            .await
-                            .map(Some);
+                // If there is name(email) fields in the ResultEntry...
+                if let Some(name_collection) = entry.attrs.get(attr) {
+                    // Iter over each of them...
+                    for name in name_collection {
+                        // Until there is one corresponding to the email entered
+                        // (additional verification over LDAP results when requesting email)
+                        if name.eq(address) {
+                            return self
+                                .data_store
+                                .get_or_create_principal_id(name, Type::Individual)
+                                .await
+                                .map(Some);
+                        }
                     }
                 }
             }
